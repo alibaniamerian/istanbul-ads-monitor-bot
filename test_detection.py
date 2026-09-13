@@ -36,6 +36,11 @@ def test_comma_separated_gokturk_address_is_detected():
     assert bot.find_area(text) in {"göktürk", "gokturk"}
 
 
+def test_report_recipients_include_second_manager():
+    assert 112484108 in bot.ADMIN_CHAT_IDS
+    assert len(bot.ADMIN_CHAT_IDS) == len(set(bot.ADMIN_CHAT_IDS))
+
+
 def test_missing_price_is_reported():
     text = "لباس زنانه نو برای فروش در شیشلی، سایز متوسط"
     assert not bot.has_price(text)

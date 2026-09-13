@@ -22,6 +22,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+configured_admin_ids = os.getenv("ADMIN_CHAT_IDS", "")
+ADMIN_CHAT_IDS = [
+    int(chat_id.strip())
+    for chat_id in configured_admin_ids.split(",")
+    if chat_id.strip().lstrip("-").isdigit()
+]
+if ADMIN_CHAT_ID:
+    ADMIN_CHAT_IDS.insert(0, ADMIN_CHAT_ID)
+ADMIN_CHAT_IDS.append(112484108)
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "ads_monitor.sqlite3"))
 
 router = Router()
@@ -245,11 +254,9 @@ async def flush_pending_ad(key: tuple[int, int], bot: Bot) -> None:
         analysis = await analyze_listing(combined_text, images)
         if analysis is None:
             logging.getLogger(__name__).warning("Gemini unavailable; using local detector for message %s", representative.message_id)
-    if ADMIN_CHAT_ID:
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            build_report(representative, combined_text, previous_text, similarity, analysis),
-        )
+    report = build_report(representative, combined_text, previous_text, similarity, analysis)
+    for admin_chat_id in dict.fromkeys(ADMIN_CHAT_IDS):
+        await bot.send_message(admin_chat_id, report)
 
 
 @router.message(CommandStart())
