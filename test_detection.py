@@ -41,10 +41,19 @@ def test_report_recipients_include_second_manager():
     assert len(bot.ADMIN_CHAT_IDS) == len(set(bot.ADMIN_CHAT_IDS))
 
 
+def test_duplicate_lookback_is_48_hours():
+    assert bot.DUPLICATE_LOOKBACK_HOURS == 48
+
+
 def test_missing_price_is_reported():
     text = "لباس زنانه نو برای فروش در شیشلی، سایز متوسط"
     assert not bot.has_price(text)
     assert bot.find_area(text) == "شیشلی"
+
+
+def test_area_name_is_detected_anywhere_but_not_inside_another_word():
+    assert bot.find_area("میز مدل کادیکوی، رنگ سفید") == "کادیکوی"
+    assert bot.find_area("محصول کادیکویلی، رنگ سفید") is None
 
 
 def test_non_ad_is_ignored():

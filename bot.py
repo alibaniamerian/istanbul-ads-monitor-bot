@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, Router
@@ -38,6 +38,7 @@ seen_media_groups: set[str] = set()
 pending_ads: dict[tuple[int, int], list[Message]] = {}
 pending_tasks: dict[tuple[int, int], asyncio.Task] = {}
 PENDING_AD_WINDOW_SECONDS = 20
+DUPLICATE_LOOKBACK_HOURS = 48
 
 ISTANBUL_AREAS = {
     "آرناووتکوی", "آوجیلار", "آتاشهیر", "آیوب سلطان", "اسنیورت",
@@ -90,9 +91,17 @@ def has_price(text: str) -> bool:
 
 def find_area(text: str) -> str | None:
     normalized = normalize_text(text)
-    for area in sorted(ISTANBUL_AREAS, key=len, reverse=True):
-        if normalize_text(area) in normalized:
-            return area
+    area_pattern = "|".join(
+        re.escape(normalize_text(area))
+        for area in sorted(ISTANBUL_AREAS, key=len, reverse=True)
+    )
+    area_match = re.search(rf"(?<![\wآ-ی])({area_pattern})(?![\wآ-ی])", normalized)
+    if area_match:
+        matched_area = area_match.group(1)
+        return next(
+            area for area in sorted(ISTANBUL_AREAS, key=len, reverse=True)
+            if normalize_text(area) == matched_area
+        )
     turkish_address_match = re.search(
         r"(?:istanbul|استانبول)\s*[/،,]\s*([\wآ-یİıÇçĞğÖöŞşÜü\-]+(?:\s+[\wآ-یİıÇçĞğÖöŞşÜü\-]+){0,3})",
         normalized,
@@ -143,9 +152,12 @@ def save_ad(message: Message, text: str) -> tuple[int, str | None, float]:
     previous_text = None
 
     with sqlite3.connect(DATABASE_PATH) as connection:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=DUPLICATE_LOOKBACK_HOURS)).isoformat()
         candidates = connection.execute(
-            "SELECT text FROM ads WHERE chat_id = ? ORDER BY id DESC LIMIT 100",
-            (message.chat.id,),
+            """SELECT text FROM ads
+               WHERE chat_id = ? AND user_id = ? AND created_at >= ?
+               ORDER BY id DESC""",
+            (message.chat.id, message.from_user.id if message.from_user else None, cutoff),
         ).fetchall()
         for (candidate,) in candidates:
             score = difflib.SequenceMatcher(None, normalized, candidate).ratio()
@@ -168,6 +180,18 @@ def save_ad(message: Message, text: str) -> tuple[int, str | None, float]:
         return cursor.lastrowid, previous_text, similarity
 
 
+def recent_sender_ads(chat_id: int, user_id: int | None) -> list[str]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=DUPLICATE_LOOKBACK_HOURS)).isoformat()
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        rows = connection.execute(
+            """SELECT text FROM ads
+               WHERE chat_id = ? AND user_id = ? AND created_at >= ?
+               ORDER BY id DESC""",
+            (chat_id, user_id, cutoff),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
 def build_report(
     message: Message,
     text: str,
@@ -179,16 +203,21 @@ def build_report(
     price_found = has_price(text) or ai_has_price
     price_status = "✅ پیدا شد" if price_found else "⚠️ پیدا نشد"
     area = find_area(text)
-    if not area and analysis and analysis.get("has_istanbul_location"):
-        area = str(analysis.get("location") or "پیدا شد")
+    if analysis and analysis.get("has_istanbul_location") and analysis.get("location"):
+        area = str(analysis["location"])
     area_status = f"✅ {area}" if area else "⚠️ پیدا نشد"
     warnings = []
     if not price_found:
         warnings.append("قیمت ندارد")
     if not area:
         warnings.append("منطقه استانبول پیدا نشد")
-    if similarity >= 0.78:
-        warnings.append(f"احتمال تکراری بودن ({similarity:.0%})")
+    if similarity >= 0.78 or bool(analysis and analysis.get("is_duplicate")):
+        duplicate_note = (
+            f"احتمال تکراری بودن ({similarity:.0%})"
+            if similarity >= 0.78
+            else "احتمال تکراری بودن طبق تحلیل Gemini"
+        )
+        warnings.append(duplicate_note)
 
     status = "⚠️ نیازمند بررسی" if warnings else "✅ معتبر"
     lines = [
@@ -246,12 +275,16 @@ async def flush_pending_ad(key: tuple[int, int], bot: Bot) -> None:
         if message.text or message.caption
     )
     representative = messages[-1]
+    previous_ads = recent_sender_ads(
+        representative.chat.id,
+        representative.from_user.id if representative.from_user else None,
+    )
     _, previous_text, similarity = save_ad(representative, combined_text)
     analysis = None
     if os.getenv("GEMINI_API_KEY"):
         logging.getLogger(__name__).info("Starting Gemini analysis for message %s", representative.message_id)
         images = await download_images(messages, bot)
-        analysis = await analyze_listing(combined_text, images)
+        analysis = await analyze_listing(combined_text, images, previous_ads)
         if analysis is None:
             logging.getLogger(__name__).warning("Gemini unavailable; using local detector for message %s", representative.message_id)
     report = build_report(representative, combined_text, previous_text, similarity, analysis)
