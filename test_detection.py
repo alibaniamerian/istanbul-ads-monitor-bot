@@ -55,7 +55,9 @@ def test_correction_message_lists_missing_fields():
     message = bot.build_correction_message("فروش مبل در کادیکوی")
     assert message is not None
     assert "قیمت" in message
-    assert "همین آگهی را ویرایش" in message
+    assert "همین آگهی را طوری ویرایش کنید" in message
+    assert "آدرس: کادیکوی" in message
+    assert "قیمت: ۲۰۰۰۰ لیر" in message
 
 
 def test_missing_price_is_reported():
