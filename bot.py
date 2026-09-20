@@ -8,6 +8,7 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from datetime import timezone as datetime_timezone
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import CommandStart
@@ -39,6 +40,14 @@ pending_ads: dict[tuple[int, int], list[Message]] = {}
 pending_tasks: dict[tuple[int, int], asyncio.Task] = {}
 PENDING_AD_WINDOW_SECONDS = 20
 DUPLICATE_LOOKBACK_HOURS = 48
+ISTANBUL_TIMEZONE = datetime_timezone(timedelta(hours=3), name="Europe/Istanbul")
+DAILY_CALENDAR_HOUR = 7
+PERSIAN_WEEKDAYS = ("دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه", "شنبه", "یکشنبه")
+TURKISH_WEEKDAYS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
+TURKISH_MONTHS = (
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+)
 
 ISTANBUL_AREAS = {
     "آرناووتکوی", "آوجیلار", "آتاشهیر", "آیوب سلطان", "اسنیورت",
@@ -146,7 +155,136 @@ def init_database() -> None:
                 created_at TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS daily_calendar (local_date TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS monitored_groups (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS daily_group_calendar (
+                local_date TEXT NOT NULL,
+                chat_id INTEGER NOT NULL,
+                sent_at TEXT NOT NULL,
+                PRIMARY KEY(local_date, chat_id)
+            )"""
+        )
         connection.commit()
+
+
+def calendar_sent(local_date: str) -> bool:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        return connection.execute(
+            "SELECT 1 FROM daily_calendar WHERE local_date = ?", (local_date,)
+        ).fetchone() is not None
+
+
+def mark_calendar_sent(local_date: str) -> None:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO daily_calendar(local_date, sent_at) VALUES (?, ?)",
+            (local_date, datetime.now(timezone.utc).isoformat()),
+        )
+        connection.commit()
+
+
+def register_group(message: Message) -> None:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO monitored_groups(chat_id, title) VALUES (?, ?)",
+            (message.chat.id, message.chat.title or str(message.chat.id)),
+        )
+        connection.commit()
+
+
+def monitored_group_ids() -> list[int]:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        rows = connection.execute("SELECT chat_id FROM monitored_groups").fetchall()
+        legacy_rows = connection.execute("SELECT DISTINCT chat_id FROM ads").fetchall()
+    return sorted({row[0] for row in rows + legacy_rows})
+
+
+def group_calendar_sent(local_date: str, chat_id: int) -> bool:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        return connection.execute(
+            "SELECT 1 FROM daily_group_calendar WHERE local_date = ? AND chat_id = ?",
+            (local_date, chat_id),
+        ).fetchone() is not None
+
+
+def mark_group_calendar_sent(local_date: str, chat_id: int) -> None:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO daily_group_calendar(local_date, chat_id, sent_at) VALUES (?, ?, ?)",
+            (local_date, chat_id, datetime.now(timezone.utc).isoformat()),
+        )
+        connection.commit()
+
+
+def gregorian_to_jalali(year: int, month: int, day: int) -> tuple[int, int, int]:
+    month_days = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    gy, gm, gd = year - 1600, month - 1, day - 1
+    day_number = 365 * gy + (gy + 3) // 4 - (gy + 99) // 100 + (gy + 399) // 400
+    day_number += sum(month_days[:gm]) + gd
+    if gm > 1 and (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)):
+        day_number += 1
+    jalali_day_number = day_number - 79
+    cycle = jalali_day_number // 12053
+    jalali_day_number %= 12053
+    jy = 979 + 33 * cycle + 4 * (jalali_day_number // 1461)
+    jalali_day_number %= 1461
+    if jalali_day_number >= 366:
+        jy += (jalali_day_number - 1) // 365
+        jalali_day_number = (jalali_day_number - 1) % 365
+    if jalali_day_number < 186:
+        jm = 1 + jalali_day_number // 31
+        jd = 1 + jalali_day_number % 31
+    else:
+        jm = 7 + (jalali_day_number - 186) // 30
+        jd = 1 + (jalali_day_number - 186) % 30
+    return jy, jm, jd
+
+
+def build_daily_calendar(now: datetime) -> str:
+    local_date = now.date()
+    jalali_year, jalali_month, jalali_day = gregorian_to_jalali(
+        local_date.year, local_date.month, local_date.day
+    )
+    weekday = local_date.weekday()
+    return (
+        "╭──────────────╮\n"
+        "│  📅 تقویم امروز  │\n"
+        "╰──────────────╯\n\n"
+        f"🇮🇷 شمسی: {PERSIAN_WEEKDAYS[weekday]}، {jalali_year}/{jalali_month:02d}/{jalali_day:02d}\n"
+        f"🌍 میلادی: {now.strftime('%A')}، {local_date.year}/{local_date.month:02d}/{local_date.day:02d}\n"
+        f"🇹🇷 ترکی: {TURKISH_WEEKDAYS[weekday]}، {local_date.day} {TURKISH_MONTHS[local_date.month - 1]} {local_date.year}\n\n"
+        "🕖 ساعت محاسبه: به وقت استانبول"
+    )
+
+
+async def daily_calendar_loop(bot: Bot) -> None:
+    while True:
+        now = datetime.now(ISTANBUL_TIMEZONE)
+        today = now.date().isoformat()
+        if now.hour >= DAILY_CALENDAR_HOUR:
+            try:
+                message = build_daily_calendar(now)
+                for group_id in monitored_group_ids():
+                    if not group_calendar_sent(today, group_id):
+                        await bot.send_message(group_id, message)
+                        mark_group_calendar_sent(today, group_id)
+                        logging.getLogger(__name__).info("Daily calendar sent to %s for %s", group_id, today)
+            except Exception as error:
+                logging.getLogger(__name__).warning("Daily calendar failed: %s", error)
+            await asyncio.sleep(60)
+            continue
+        target = now.replace(hour=DAILY_CALENDAR_HOUR, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep(max(30, (target - now).total_seconds()))
 
 
 def save_ad(message: Message, text: str) -> tuple[int, str | None, float]:
@@ -334,6 +472,7 @@ async def start(message: Message) -> None:
 async def inspect_message(message: Message, bot: Bot) -> None:
     if message.chat.type not in {"group", "supergroup"}:
         return
+    register_group(message)
     if message.from_user:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if is_group_admin_status(member.status):
@@ -373,6 +512,7 @@ async def main() -> None:
     )
     init_database()
     bot = Bot(BOT_TOKEN)
+    asyncio.create_task(daily_calendar_loop(bot))
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     await dispatcher.start_polling(bot)

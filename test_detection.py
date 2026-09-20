@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import bot
 
 
@@ -58,6 +60,19 @@ def test_correction_message_lists_missing_fields():
     assert "همین آگهی را طوری ویرایش کنید" in message
     assert "آدرس: کادیکوی" in message
     assert "قیمت: ۲۰۰۰۰ لیر" in message
+
+
+def test_daily_calendar_contains_three_date_formats():
+    calendar = bot.build_daily_calendar(
+        datetime(2026, 9, 20, 8, tzinfo=bot.ISTANBUL_TIMEZONE)
+    )
+    assert "شمسی:" in calendar
+    assert "میلادی:" in calendar
+    assert "ترکی:" in calendar
+
+
+def test_gregorian_to_jalali_conversion():
+    assert bot.gregorian_to_jalali(2026, 9, 20) == (1405, 6, 29)
 
 
 def test_missing_price_is_reported():
