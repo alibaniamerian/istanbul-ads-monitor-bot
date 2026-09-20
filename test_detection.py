@@ -45,6 +45,12 @@ def test_duplicate_lookback_is_48_hours():
     assert bot.DUPLICATE_LOOKBACK_HOURS == 48
 
 
+def test_group_admin_statuses_are_excluded():
+    assert bot.is_group_admin_status("administrator")
+    assert bot.is_group_admin_status("creator")
+    assert not bot.is_group_admin_status("member")
+
+
 def test_missing_price_is_reported():
     text = "لباس زنانه نو برای فروش در شیشلی، سایز متوسط"
     assert not bot.has_price(text)

@@ -129,6 +129,10 @@ def should_inspect_message(text: str, has_photo: bool = False) -> bool:
     return has_photo or message_is_ad(text)
 
 
+def is_group_admin_status(status: str) -> bool:
+    return status in {"administrator", "creator"}
+
+
 def init_database() -> None:
     with sqlite3.connect(DATABASE_PATH) as connection:
         connection.execute(
@@ -302,6 +306,15 @@ async def start(message: Message) -> None:
 async def inspect_message(message: Message, bot: Bot) -> None:
     if message.chat.type not in {"group", "supergroup"}:
         return
+    if message.from_user:
+        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        if is_group_admin_status(member.status):
+            logging.getLogger(__name__).info(
+                "Skipping admin message %s from user %s",
+                message.message_id,
+                message.from_user.id,
+            )
+            return
     if message.media_group_id:
         text = message.text or message.caption or ""
         if message.media_group_id in seen_media_groups and not text:
