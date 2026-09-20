@@ -51,6 +51,13 @@ def test_group_admin_statuses_are_excluded():
     assert not bot.is_group_admin_status("member")
 
 
+def test_correction_message_lists_missing_fields():
+    message = bot.build_correction_message("فروش مبل در کادیکوی")
+    assert message is not None
+    assert "قیمت" in message
+    assert "همین آگهی را ویرایش" in message
+
+
 def test_missing_price_is_reported():
     text = "لباس زنانه نو برای فروش در شیشلی، سایز متوسط"
     assert not bot.has_price(text)

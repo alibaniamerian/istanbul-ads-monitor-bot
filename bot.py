@@ -243,6 +243,25 @@ def build_report(
     return "\n".join(lines)
 
 
+def build_correction_message(text: str, analysis: dict | None = None) -> str | None:
+    price_found = has_price(text) or bool(analysis and analysis.get("has_price"))
+    area_found = bool(find_area(text)) or bool(
+        analysis and analysis.get("has_istanbul_location") and analysis.get("location")
+    )
+    missing = []
+    if not price_found:
+        missing.append("۱. قیمت دقیق کالا یا کالاها را به‌صورت خوانا درج کنید.")
+    if not area_found:
+        missing.append("۲. آدرس یا منطقه استانبول را به‌صورت خوانا درج کنید.")
+    if not missing:
+        return None
+    return (
+        "⚠️ لطفاً آگهی خود را اصلاح کنید:\n\n"
+        + "\n".join(missing)
+        + "\n\nلطفاً همین آگهی را ویرایش و اطلاعات ناقص را تکمیل کنید."
+    )
+
+
 async def download_images(messages: list[Message], bot: Bot) -> list[tuple[bytes, str]]:
     images = []
     seen_file_ids = set()
@@ -294,6 +313,13 @@ async def flush_pending_ad(key: tuple[int, int], bot: Bot) -> None:
     report = build_report(representative, combined_text, previous_text, similarity, analysis)
     for admin_chat_id in dict.fromkeys(ADMIN_CHAT_IDS):
         await bot.send_message(admin_chat_id, report)
+    correction = build_correction_message(combined_text, analysis)
+    if correction:
+        await bot.send_message(
+            representative.chat.id,
+            correction,
+            reply_to_message_id=representative.message_id,
+        )
 
 
 @router.message(CommandStart())
