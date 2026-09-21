@@ -62,6 +62,11 @@ def test_correction_message_lists_missing_fields():
     assert "قیمت: ۲۰۰۰۰ لیر" in message
 
 
+    def test_negotiation_does_not_get_correction_message():
+        analysis = {"is_ad": False, "has_price": False, "has_istanbul_location": False}
+        assert bot.build_correction_message("آخرین قیمت چنده؟", analysis) is None
+
+
 def test_daily_calendar_contains_three_date_formats():
     calendar = bot.build_daily_calendar(
         datetime(2026, 9, 20, 8, tzinfo=bot.ISTANBUL_TIMEZONE)

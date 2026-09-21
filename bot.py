@@ -383,6 +383,8 @@ def build_report(
 
 def build_correction_message(text: str, analysis: dict | None = None) -> str | None:
     price_found = has_price(text) or bool(analysis and analysis.get("has_price"))
+    if analysis is not None and analysis.get("is_ad") is False:
+        return None
     area_found = bool(find_area(text)) or bool(
         analysis and analysis.get("has_istanbul_location") and analysis.get("location")
     )
