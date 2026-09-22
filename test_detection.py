@@ -61,10 +61,14 @@ def test_correction_message_lists_missing_fields():
     assert "آدرس: کادیکوی" in message
     assert "قیمت: ۲۰۰۰۰ لیر" in message
 
+def test_negotiation_does_not_get_correction_message():
+    analysis = {"is_ad": False, "has_price": False, "has_istanbul_location": False}
+    assert bot.build_correction_message("آخرین قیمت چنده؟", analysis) is None
 
-    def test_negotiation_does_not_get_correction_message():
-        analysis = {"is_ad": False, "has_price": False, "has_istanbul_location": False}
-        assert bot.build_correction_message("آخرین قیمت چنده؟", analysis) is None
+
+    def test_gemini_classifies_conversation_as_not_an_ad():
+        analysis = {"is_ad": False, "reason": "مذاکره معمولی"}
+        assert analysis["is_ad"] is False
 
 
 def test_daily_calendar_contains_three_date_formats():

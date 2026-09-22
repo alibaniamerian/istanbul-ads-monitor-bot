@@ -444,14 +444,30 @@ async def flush_pending_ad(key: tuple[int, int], bot: Bot) -> None:
         representative.chat.id,
         representative.from_user.id if representative.from_user else None,
     )
-    _, previous_text, similarity = save_ad(representative, combined_text)
     analysis = None
+    images: list[tuple[bytes, str]] = []
     if os.getenv("GEMINI_API_KEY"):
-        logging.getLogger(__name__).info("Starting Gemini analysis for message %s", representative.message_id)
+        logging.getLogger(__name__).info(
+            "Starting Gemini analysis for message %s (all message types)",
+            representative.message_id,
+        )
         images = await download_images(messages, bot)
         analysis = await analyze_listing(combined_text, images, previous_ads)
         if analysis is None:
-            logging.getLogger(__name__).warning("Gemini unavailable; using local detector for message %s", representative.message_id)
+            logging.getLogger(__name__).warning(
+                "Gemini unavailable; using local detector for message %s",
+                representative.message_id,
+            )
+
+    local_candidate = should_inspect_message(combined_text, has_photo=bool(images)) if analysis is None else False
+    if analysis is not None and analysis.get("is_ad") is False:
+        logging.getLogger(__name__).info("Gemini classified message %s as conversation", representative.message_id)
+        return
+    if analysis is not None and analysis.get("is_ad") is not True and not local_candidate:
+        logging.getLogger(__name__).info("Message %s was not classified as an ad", representative.message_id)
+        return
+
+    _, previous_text, similarity = save_ad(representative, combined_text)
     report = build_report(representative, combined_text, previous_text, similarity, analysis)
     for admin_chat_id in dict.fromkeys(ADMIN_CHAT_IDS):
         await bot.send_message(admin_chat_id, report)
@@ -491,7 +507,7 @@ async def inspect_message(message: Message, bot: Bot) -> None:
         seen_media_groups.add(message.media_group_id)
     else:
         text = message.text or message.caption or ""
-    if not should_inspect_message(text, has_photo=bool(message.photo)):
+    if not text and not message.photo:
         return
     user_id = message.from_user.id if message.from_user else 0
     key = (message.chat.id, user_id)
