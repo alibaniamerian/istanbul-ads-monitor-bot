@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import timezone as datetime_timezone
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 from dotenv import load_dotenv
@@ -172,6 +173,9 @@ def init_database() -> None:
                 PRIMARY KEY(local_date, chat_id)
             )"""
         )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS inactive_groups (chat_id INTEGER PRIMARY KEY)"
+        )
         connection.commit()
 
 
@@ -193,6 +197,7 @@ def mark_calendar_sent(local_date: str) -> None:
 
 def register_group(message: Message) -> None:
     with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute("DELETE FROM inactive_groups WHERE chat_id = ?", (message.chat.id,))
         connection.execute(
             "INSERT OR REPLACE INTO monitored_groups(chat_id, title) VALUES (?, ?)",
             (message.chat.id, message.chat.title or str(message.chat.id)),
@@ -202,9 +207,19 @@ def register_group(message: Message) -> None:
 
 def monitored_group_ids() -> list[int]:
     with sqlite3.connect(DATABASE_PATH) as connection:
-        rows = connection.execute("SELECT chat_id FROM monitored_groups").fetchall()
-        legacy_rows = connection.execute("SELECT DISTINCT chat_id FROM ads").fetchall()
+        rows = connection.execute(
+            "SELECT chat_id FROM monitored_groups WHERE chat_id NOT IN (SELECT chat_id FROM inactive_groups)"
+        ).fetchall()
+        legacy_rows = connection.execute(
+            "SELECT DISTINCT chat_id FROM ads WHERE chat_id NOT IN (SELECT chat_id FROM inactive_groups)"
+        ).fetchall()
     return sorted({row[0] for row in rows + legacy_rows})
+
+
+def mark_group_inactive(chat_id: int) -> None:
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute("INSERT OR IGNORE INTO inactive_groups(chat_id) VALUES (?)", (chat_id,))
+        connection.commit()
 
 
 def group_calendar_sent(local_date: str, chat_id: int) -> bool:
@@ -274,9 +289,15 @@ async def daily_calendar_loop(bot: Bot) -> None:
                 message = build_daily_calendar(now)
                 for group_id in monitored_group_ids():
                     if not group_calendar_sent(today, group_id):
-                        await bot.send_message(group_id, message)
-                        mark_group_calendar_sent(today, group_id)
-                        logging.getLogger(__name__).info("Daily calendar sent to %s for %s", group_id, today)
+                        try:
+                            await bot.send_message(group_id, message)
+                            mark_group_calendar_sent(today, group_id)
+                            logging.getLogger(__name__).info("Daily calendar sent to %s for %s", group_id, today)
+                        except TelegramForbiddenError:
+                            mark_group_inactive(group_id)
+                            logging.getLogger(__name__).warning(
+                                "Disabled calendar for inaccessible group %s", group_id
+                            )
             except Exception as error:
                 logging.getLogger(__name__).warning("Daily calendar failed: %s", error)
             await asyncio.sleep(60)
