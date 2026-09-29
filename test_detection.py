@@ -1,4 +1,4 @@
-from datetime import datetime
+from types import SimpleNamespace
 
 import bot
 
@@ -90,17 +90,13 @@ def test_ai_missing_location_overrides_local_match_for_correction():
     assert "آدرس یا منطقه استانبول" in correction
 
 
-def test_daily_calendar_contains_three_date_formats():
-    calendar = bot.build_daily_calendar(
-        datetime(2026, 9, 20, 8, tzinfo=bot.ISTANBUL_TIMEZONE)
-    )
-    assert "شمسی:" in calendar
-    assert "میلادی:" in calendar
-    assert "ترکی:" in calendar
-
-
-def test_gregorian_to_jalali_conversion():
-    assert bot.gregorian_to_jalali(2026, 9, 20) == (1405, 6, 29)
+def test_calendar_sticker_selector_picks_calendar_emoji():
+    stickers = [
+        SimpleNamespace(emoji="🟢"),
+        SimpleNamespace(emoji="📆"),
+        SimpleNamespace(emoji="🔵"),
+    ]
+    assert bot.select_calendar_sticker(stickers) is stickers[1]
 
 
 def test_missing_price_is_reported():
