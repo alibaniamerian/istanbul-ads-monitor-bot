@@ -85,9 +85,27 @@ def test_ai_missing_location_overrides_local_match_for_correction():
         "has_istanbul_location": False,
         "location": "",
     }
-    correction = bot.build_correction_message("فروش مبل در کادیکوی، ۲۰۰۰۰ لیر", analysis)
+    correction = bot.build_correction_message("فروش مبل، ۲۰۰۰۰ لیر", analysis)
     assert correction is not None
     assert "آدرس یا منطقه استانبول" in correction
+
+
+def test_local_area_supports_ai_location_miss():
+    analysis = {
+        "is_ad": True,
+        "has_price": True,
+        "has_istanbul_location": False,
+        "location": "",
+    }
+    report = bot.build_report(
+        SimpleNamespace(from_user=None, chat=SimpleNamespace(title="Test"), message_id=1),
+        "فروش مبل در کادیکوی، قیمت ۲۰۰۰۰ لیر",
+        None,
+        0,
+        analysis,
+    )
+    assert "کادیکوی" in report
+    assert "منطقه استانبول پیدا نشد" not in report
 
 
 def test_calendar_sticker_selector_picks_calendar_emoji():

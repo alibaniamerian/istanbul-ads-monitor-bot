@@ -341,10 +341,12 @@ def build_report(
         else has_price(text)
     )
     price_status = "✅ پیدا شد" if price_found else "⚠️ پیدا نشد"
+    local_area = find_area(text)
     if analysis is not None:
-        area = str(analysis.get("location") or "") if analysis.get("has_istanbul_location") else None
+        ai_area = str(analysis.get("location") or "") if analysis.get("has_istanbul_location") else ""
+        area = ai_area or local_area
     else:
-        area = find_area(text)
+        area = local_area
     area_status = f"✅ {area}" if area else "⚠️ پیدا نشد"
     warnings = []
     if not price_found:
@@ -383,11 +385,11 @@ def build_correction_message(text: str, analysis: dict | None = None) -> str | N
     if analysis is not None and analysis.get("is_ad") is False:
         return None
     price_found = bool(analysis.get("has_price")) if analysis is not None else has_price(text)
-    area_found = (
-        bool(analysis.get("has_istanbul_location") and analysis.get("location"))
-        if analysis is not None
-        else bool(find_area(text))
-    )
+    area_found = bool(find_area(text))
+    if analysis is not None:
+        area_found = area_found or bool(
+            analysis.get("has_istanbul_location") and analysis.get("location")
+        )
     missing = []
     if not price_found:
         missing.append("۱. قیمت دقیق کالا یا کالاها را به‌صورت خوانا درج کنید.")
