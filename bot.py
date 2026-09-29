@@ -143,6 +143,10 @@ def is_group_admin_status(status: str) -> bool:
     return status in {"administrator", "creator"}
 
 
+def is_confirmed_ad(analysis: dict | None) -> bool:
+    return analysis is not None and analysis.get("is_ad") is True
+
+
 def init_database() -> None:
     with sqlite3.connect(DATABASE_PATH) as connection:
         connection.execute(
@@ -362,12 +366,16 @@ def build_report(
     similarity: float,
     analysis: dict | None = None,
 ) -> str:
-    ai_has_price = bool(analysis and analysis.get("has_price"))
-    price_found = has_price(text) or ai_has_price
+    price_found = (
+        bool(analysis.get("has_price"))
+        if analysis is not None
+        else has_price(text)
+    )
     price_status = "✅ پیدا شد" if price_found else "⚠️ پیدا نشد"
-    area = find_area(text)
-    if analysis and analysis.get("has_istanbul_location") and analysis.get("location"):
-        area = str(analysis["location"])
+    if analysis is not None:
+        area = str(analysis.get("location") or "") if analysis.get("has_istanbul_location") else None
+    else:
+        area = find_area(text)
     area_status = f"✅ {area}" if area else "⚠️ پیدا نشد"
     warnings = []
     if not price_found:
@@ -403,11 +411,13 @@ def build_report(
 
 
 def build_correction_message(text: str, analysis: dict | None = None) -> str | None:
-    price_found = has_price(text) or bool(analysis and analysis.get("has_price"))
     if analysis is not None and analysis.get("is_ad") is False:
         return None
-    area_found = bool(find_area(text)) or bool(
-        analysis and analysis.get("has_istanbul_location") and analysis.get("location")
+    price_found = bool(analysis.get("has_price")) if analysis is not None else has_price(text)
+    area_found = (
+        bool(analysis.get("has_istanbul_location") and analysis.get("location"))
+        if analysis is not None
+        else bool(find_area(text))
     )
     missing = []
     if not price_found:
@@ -465,27 +475,27 @@ async def flush_pending_ad(key: tuple[int, int], bot: Bot) -> None:
         representative.chat.id,
         representative.from_user.id if representative.from_user else None,
     )
-    analysis = None
-    images: list[tuple[bytes, str]] = []
-    if os.getenv("GEMINI_API_KEY"):
-        logging.getLogger(__name__).info(
-            "Starting Gemini analysis for message %s (all message types)",
+    if not os.getenv("GEMINI_API_KEY"):
+        logging.getLogger(__name__).warning(
+            "Gemini key missing; skipping message %s instead of guessing locally",
             representative.message_id,
         )
-        images = await download_images(messages, bot)
-        analysis = await analyze_listing(combined_text, images, previous_ads)
-        if analysis is None:
-            logging.getLogger(__name__).warning(
-                "Gemini unavailable; using local detector for message %s",
-                representative.message_id,
-            )
-
-    local_candidate = should_inspect_message(combined_text, has_photo=bool(images)) if analysis is None else False
-    if analysis is not None and analysis.get("is_ad") is False:
-        logging.getLogger(__name__).info("Gemini classified message %s as conversation", representative.message_id)
         return
-    if analysis is not None and analysis.get("is_ad") is not True and not local_candidate:
-        logging.getLogger(__name__).info("Message %s was not classified as an ad", representative.message_id)
+
+    logging.getLogger(__name__).info(
+        "Starting Gemini analysis for message %s (all member text/photo messages)",
+        representative.message_id,
+    )
+    images = await download_images(messages, bot)
+    analysis = await analyze_listing(combined_text, images, previous_ads)
+    if analysis is None:
+        logging.getLogger(__name__).warning(
+            "Gemini unavailable; skipping message %s instead of guessing locally",
+            representative.message_id,
+        )
+        return
+    if not is_confirmed_ad(analysis):
+        logging.getLogger(__name__).info("Gemini classified message %s as conversation", representative.message_id)
         return
 
     _, previous_text, similarity = save_ad(representative, combined_text)

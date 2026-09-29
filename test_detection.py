@@ -53,6 +53,13 @@ def test_group_admin_statuses_are_excluded():
     assert not bot.is_group_admin_status("member")
 
 
+def test_only_explicit_gemini_ad_classification_is_accepted():
+    assert bot.is_confirmed_ad({"is_ad": True})
+    assert not bot.is_confirmed_ad({"is_ad": False})
+    assert not bot.is_confirmed_ad({"has_price": True})
+    assert not bot.is_confirmed_ad(None)
+
+
 def test_correction_message_lists_missing_fields():
     message = bot.build_correction_message("فروش مبل در کادیکوی")
     assert message is not None
@@ -66,9 +73,21 @@ def test_negotiation_does_not_get_correction_message():
     assert bot.build_correction_message("آخرین قیمت چنده؟", analysis) is None
 
 
-    def test_gemini_classifies_conversation_as_not_an_ad():
-        analysis = {"is_ad": False, "reason": "مذاکره معمولی"}
-        assert analysis["is_ad"] is False
+def test_gemini_classifies_conversation_as_not_an_ad():
+    analysis = {"is_ad": False, "reason": "مذاکره معمولی"}
+    assert not bot.is_confirmed_ad(analysis)
+
+
+def test_ai_missing_location_overrides_local_match_for_correction():
+    analysis = {
+        "is_ad": True,
+        "has_price": True,
+        "has_istanbul_location": False,
+        "location": "",
+    }
+    correction = bot.build_correction_message("فروش مبل در کادیکوی، ۲۰۰۰۰ لیر", analysis)
+    assert correction is not None
+    assert "آدرس یا منطقه استانبول" in correction
 
 
 def test_daily_calendar_contains_three_date_formats():
